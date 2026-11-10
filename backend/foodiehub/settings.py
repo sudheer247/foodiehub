@@ -19,11 +19,18 @@ ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1").split(","
 RENDER_HOST = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
 if RENDER_HOST:
     ALLOWED_HOSTS.append(RENDER_HOST)
-    CSRF_TRUSTED_ORIGINS = [f"https://{RENDER_HOST}"]
+    CSRF_TRUSTED_ORIGINS = [f"https://{RENDER_HOST}"]   # lets the /admin login work over https
 
 # Demo deployments only: also return the OTP in the API response so a visitor can see it.
 # Never turn this on for real customers (anyone could log in as any number).
 SHOW_OTP_IN_RESPONSE = os.environ.get("SHOW_OTP_IN_RESPONSE", "0") == "1"
+
+# Demo deployments only: also keep the OTP in the database so `python manage.py watch_otps`
+# can print it on your own computer. Never use this with real customers.
+STORE_DEMO_OTP = os.environ.get("STORE_DEMO_OTP", "0") == "1"
+
+# How long an order takes from "confirmed" to "delivered" (simulated, in seconds)
+ORDER_DURATION_SECONDS = int(os.environ.get("ORDER_DURATION_SECONDS", "600"))
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -46,7 +53,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
 ]
 
-# WhiteNoise serves the admin panel's CSS in production
+# WhiteNoise serves the admin panel's CSS in production (optional: only used when installed)
 try:
     import whitenoise  # noqa: F401
     MIDDLEWARE.insert(2, "whitenoise.middleware.WhiteNoiseMiddleware")
@@ -78,7 +85,11 @@ DATABASES = {
 # Production: a hosted PostgreSQL database (set DATABASE_URL). Without it, SQLite is used.
 if os.environ.get("DATABASE_URL"):
     import dj_database_url
-    DATABASES["default"] = dj_database_url.parse(os.environ["DATABASE_URL"], conn_max_age=600)
+    DATABASES["default"] = dj_database_url.parse(
+        os.environ["DATABASE_URL"],
+        conn_max_age=600,
+        ssl_require=True
+    )
 
 # The Next.js frontend is allowed to call this API
 CORS_ALLOWED_ORIGINS = os.environ.get("CLIENT_ORIGIN", "http://localhost:3000").split(",")

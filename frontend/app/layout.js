@@ -5,6 +5,11 @@ export const metadata = {
   description: "Discover your favorite dishes and order them online."
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1
+};
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en">

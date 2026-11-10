@@ -7,6 +7,8 @@ urlpatterns = [
     path("auth/signup", views.signup),
     path("auth/login", views.login),
     path("orders", views.orders),
+    path("orders/<str:order_id>", views.order_detail),
+    path("orders/<str:order_id>/rate", views.order_rate),
     path("otp/send", views.otp_send),
     path("otp/verify", views.otp_verify),
     path("account", views.account),

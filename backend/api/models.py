@@ -60,10 +60,24 @@ class Profile(models.Model):
 
 class OTP(models.Model):
     target = models.CharField(max_length=254)      # phone number or email
-    purpose = models.CharField(max_length=10)      # login | phone | email
+    purpose = models.CharField(max_length=10)      # login | signup | phone | email
     code_hash = models.CharField(max_length=64)
     created_at = models.DateTimeField(default=timezone.now)
     attempts = models.PositiveSmallIntegerField(default=0)
+    demo_code = models.CharField(max_length=6, blank=True)   # only filled when STORE_DEMO_OTP=1 (demo deployments)
 
     def __str__(self):
         return f"{self.purpose} OTP for {self.target}"
+
+
+class OrderRating(models.Model):
+    """One row per star rating. kind is "food" (food_id set) or "delivery" (the delivery partner)."""
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="ratings")
+    kind = models.CharField(max_length=10)
+    food_id = models.IntegerField(null=True, blank=True)
+    stars = models.PositiveSmallIntegerField()
+    comment = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f"{self.order_id}: {self.kind} {self.stars}★"

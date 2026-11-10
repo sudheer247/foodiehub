@@ -18,7 +18,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from . import rag
-from .models import OTP, Food, Order, OrderItem, Profile
+from .models import OTP, Food, Order, OrderItem, OrderRating, Profile
 
 MAX_QTY = 10
 METHODS = ["UPI", "Card", "Cash on Delivery"]
@@ -145,21 +145,141 @@ def orders(request):
     return list_orders(request) if request.method == "GET" else create_order(request)
 
 
+# ---------- order tracking: the status is worked out from the time since the order was placed,
+# ---------- so no background worker is needed. The whole journey takes ORDER_DURATION_SECONDS.
+STAGES = [  # (share of the total time, status, detail)
+    (0.00, "Order confirmed", "We have received your order."),
+    (0.05, "Food is being prepared", "The restaurant is cooking your order."),
+    (0.20, "Food is packed", "Your order is ready and packed."),
+    (0.30, "Assigning delivery partner", "Finding a delivery partner near you."),
+    (0.40, "Delivery partner on the way", "{partner} has picked up your order."),
+    (0.60, "Delivery partner is nearby", "{partner} is a few minutes away."),
+    (0.80, "Arrived at your location", "{partner} has reached your address."),
+    (1.00, "Order delivered", "Enjoy your meal!"),
+]
+PARTNERS = [  # dummy delivery partners
+    {"name": "Ravi Kumar", "phone": "+91 90000 00001", "vehicle": "Bike · AP 03 AB 1234"},
+    {"name": "Suresh Reddy", "phone": "+91 90000 00002", "vehicle": "Scooter · AP 26 CD 5678"},
+    {"name": "Anil Naidu", "phone": "+91 90000 00003", "vehicle": "Bike · AP 39 EF 9012"},
+    {"name": "Mohan Rao", "phone": "+91 90000 00004", "vehicle": "Scooter · AP 05 GH 3456"},
+]
+
+
+def tracking_info(order, detail=False):
+    total = settings.ORDER_DURATION_SECONDS
+    elapsed = max(0, (timezone.now() - order.created_at).total_seconds())
+    stage = max(i for i, (share, _, _) in enumerate(STAGES) if elapsed >= share * total)
+    info = {
+        "stage": stage,
+        "label": STAGES[stage][1],
+        "delivered": stage == len(STAGES) - 1,
+        "eta_seconds": max(0, int(total - elapsed)),
+        "total_seconds": total,
+    }
+    if detail:
+        partner = PARTNERS[int(order.id[2:], 16) % len(PARTNERS)]
+        info["partner"] = partner if stage >= 4 else None
+        info["stages"] = [
+            {
+                "label": label,
+                "detail": text.format(partner=partner["name"]),
+                "at": (order.created_at + timedelta(seconds=share * total)).isoformat(),
+                "done": i <= stage,
+            }
+            for i, (share, label, text) in enumerate(STAGES)
+        ]
+    return info
+
+
+def rating_data(order):
+    rows = list(order.ratings.all())
+    if not rows:
+        return None
+    delivery = next((r for r in rows if r.kind == "delivery"), None)
+    return {
+        "delivery": delivery.stars if delivery else 0,
+        "comment": delivery.comment if delivery else "",
+        "food": {r.food_id: r.stars for r in rows if r.kind == "food"},
+    }
+
+
+def serialize_order(order, images, detail=False):
+    return {
+        "id": order.id,
+        "total": order.total,
+        "method": order.method,
+        "address": order.address,
+        "created_at": order.created_at.isoformat(),
+        "items": [
+            {"id": i.food_id, "name": i.name, "price": i.price, "quantity": i.quantity,
+             "image": images.get(i.food_id, "")}
+            for i in order.items.all()
+        ],
+        "tracking": tracking_info(order, detail),
+        "rating": rating_data(order),
+    }
+
+
+def food_images(orders):
+    ids = {i.food_id for o in orders for i in o.items.all()}
+    return dict(Food.objects.filter(id__in=ids).values_list("id", "image"))
+
+
+def own_order(request, order_id):
+    return request.api_user.orders.filter(id=order_id).prefetch_related("items", "ratings").first()
+
+
 def list_orders(request):
-    qs = request.api_user.orders.prefetch_related("items")[:50]
-    return JsonResponse([
-        {
-            "id": o.id,
-            "total": o.total,
-            "method": o.method,
-            "created_at": o.created_at.isoformat(),
-            "items": [
-                {"id": i.food_id, "name": i.name, "price": i.price, "quantity": i.quantity}
-                for i in o.items.all()
-            ],
-        }
-        for o in qs
-    ], safe=False)
+    orders_ = list(request.api_user.orders.prefetch_related("items", "ratings")[:50])
+    images = food_images(orders_)
+    return JsonResponse([serialize_order(o, images) for o in orders_], safe=False)
+
+
+@csrf_exempt
+@require_GET
+@require_auth
+def order_detail(request, order_id):
+    order = own_order(request, order_id)
+    if order is None:
+        return error("Order not found.", 404)
+    return JsonResponse(serialize_order(order, food_images([order]), detail=True))
+
+
+@csrf_exempt
+@require_POST
+@require_auth
+def order_rate(request, order_id):
+    order = own_order(request, order_id)
+    if order is None:
+        return error("Order not found.", 404)
+    if not tracking_info(order)["delivered"]:
+        return error("You can rate your order after it is delivered.")
+    if order.ratings.exists():
+        return error("You have already rated this order.", 409)
+
+    data = read_json(request)
+    ordered = {i.food_id for i in order.items.all()}
+    rows = []
+
+    delivery = data.get("delivery")
+    if delivery not in (None, 0):
+        if not is_int(delivery) or not 1 <= delivery <= 5:
+            return error("Choose 1 to 5 stars for the delivery partner.")
+        rows.append(OrderRating(order=order, kind="delivery", stars=delivery,
+                                comment=str(data.get("comment") or "").strip()[:300]))
+
+    foods_ = data.get("food") if isinstance(data.get("food"), list) else []
+    for item in foods_:
+        ok = (isinstance(item, dict) and is_int(item.get("id")) and is_int(item.get("stars"))
+              and item["id"] in ordered and 1 <= item["stars"] <= 5)
+        if not ok:
+            return error("Invalid food rating.")
+        rows.append(OrderRating(order=order, kind="food", food_id=item["id"], stars=item["stars"]))
+
+    if not rows:
+        return error("Please give at least one rating.")
+    OrderRating.objects.bulk_create(rows)
+    return JsonResponse({"rating": rating_data(own_order(request, order_id))}, status=201)
 
 
 def create_order(request):
@@ -294,7 +414,10 @@ def otp_send(request):
 
     code = f"{secrets.randbelow(10**6):06d}"
     OTP.objects.filter(target=target, purpose=purpose).delete()
-    OTP.objects.create(target=target, purpose=purpose, code_hash=hash_code(code, target, purpose))
+    OTP.objects.create(
+        target=target, purpose=purpose, code_hash=hash_code(code, target, purpose),
+        demo_code=code if settings.STORE_DEMO_OTP else "",
+    )
 
     # No SMS/email provider yet, so the code is printed in this terminal.
     print(f"\n[FoodieHub OTP] {purpose} code for {target}: {code}  (valid for 5 minutes)\n", flush=True)
