@@ -26,6 +26,13 @@ export default function AssistantChat({ foods, onAdd }) {
     if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth" });
   }, [messages, open]);
 
+  // The Help window can open the chat
+  useEffect(() => {
+    const openChat = () => setOpen(true);
+    window.addEventListener("open-foodiebot", openChat);
+    return () => window.removeEventListener("open-foodiebot", openChat);
+  }, []);
+
   // Changes the last (assistant) message while the answer is streaming in
   function patchLast(change) {
     setMessages(m => {

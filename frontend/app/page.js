@@ -5,6 +5,8 @@ import { api } from "../lib/api";
 import CartPanel from "../components/CartPanel";
 import CheckoutModal from "../components/CheckoutModal";
 import OrdersModal from "../components/OrdersModal";
+import TrackModal from "../components/TrackModal";
+import InfoModal from "../components/InfoModal";
 import AuthModal from "../components/AuthModal";
 import AccountModal from "../components/AccountModal";
 import AssistantChat from "../components/AssistantChat";
@@ -45,6 +47,9 @@ export default function Home() {
   const [authMode, setAuthMode] = useState("login");
   const profileRef = useRef();
   const [location, setLocation] = useState(null); // { label, address }
+  const [locGuess, setLocGuess] = useState(null); // approximate location waiting for confirmation
+  const [trackId, setTrackId] = useState(null);   // order shown in Track Order (null = newest active order)
+  const [infoKind, setInfoKind] = useState("offers"); // offers | help | terms
 
   useEffect(() => {
     if (!ready) return;
@@ -113,6 +118,7 @@ export default function Home() {
 
   function closeModal() {
     pendingCheckout.current = false;
+    setLocGuess(null);
     setModal(null);
   }
 
@@ -190,6 +196,7 @@ export default function Home() {
 
   function saveLocation(loc) {
     setLocation(loc);
+    setLocGuess(null);
     setModal(null);
     showToast(loc ? `Delivering to ${loc.label} 📍` : "Location removed");
   }
@@ -197,7 +204,13 @@ export default function Home() {
   async function detectNow() {
     showToast("Detecting your location…");
     try {
-      saveLocation(await detectLocation());
+      const loc = await detectLocation();
+      if (loc.accuracy > 3000) {
+        setLocGuess(loc); // only a rough guess from the browser: let the customer confirm
+        setModal("location");
+      } else {
+        saveLocation(loc);
+      }
     } catch (err) {
       showToast(err.message);
       setModal("location");
@@ -221,6 +234,17 @@ export default function Home() {
   function openOrders() {
     if (auth) setModal("orders");
     else openAuth("login");
+  }
+
+  function openTrack(id) {
+    if (!auth) return openAuth("login");
+    setTrackId(typeof id === "string" ? id : null);
+    setModal("track");
+  }
+
+  function openInfo(kind) {
+    setInfoKind(kind);
+    setModal("info");
   }
 
   return (
@@ -314,11 +338,11 @@ export default function Home() {
                   {auth && (
                     <li><button onClick={() => fromProfile(openAccount)}>👤 My Account</button></li>
                   )}
-                  <li><button onClick={() => fromProfile(() => showToast("New offers are coming soon 🎉"))}>🏷️ Deals &amp; Offers</button></li>
-                  <li><button onClick={() => fromProfile(openOrders)}>🚚 Track Current Order</button></li>
+                  <li><button onClick={() => fromProfile(() => openInfo("offers"))}>🏷️ Deals &amp; Offers</button></li>
+                  <li><button onClick={() => fromProfile(() => openTrack())}>🚚 Track Order</button></li>
                   <li><button onClick={() => fromProfile(openOrders)}>📦 Order History</button></li>
-                  <li><a href="#contact" onClick={() => setProfileOpen(false)}>💬 Need Help? Contact Us</a></li>
-                  <li><button onClick={() => fromProfile(() => showToast("Terms & Conditions page coming soon"))}>📄 Terms &amp; Conditions</button></li>
+                  <li><button onClick={() => fromProfile(() => openInfo("help"))}>💬 Need Help?</button></li>
+                  <li><button onClick={() => fromProfile(() => openInfo("terms"))}>📄 Terms &amp; Conditions</button></li>
                   {auth && (
                     <li>
                       <button className="logout-item" onClick={() => fromProfile(() => { setAuth(null); showToast("Logged out"); })}>
@@ -434,7 +458,7 @@ export default function Home() {
         onCheckout={startCheckout}
       />
 
-      {modal === "location" && <LocationModal current={location} onSave={saveLocation} onClose={closeModal} />}
+      {modal === "location" && <LocationModal current={location} guess={locGuess} onSave={saveLocation} onClose={closeModal} />}
       {modal === "auth" && <AuthModal initialMode={authMode} onClose={closeModal} onAuth={handleAuth} />}
       {modal === "checkout" && auth && (
         <CheckoutModal
@@ -445,6 +469,7 @@ export default function Home() {
           onClose={closeModal}
           onPlaced={() => setCart([])}
           onViewOrders={() => setModal("orders")}
+          onTrack={openTrack}
         />
       )}
       {modal === "account" && auth && (
@@ -456,8 +481,12 @@ export default function Home() {
         />
       )}
       {modal === "orders" && auth && (
-        <OrdersModal auth={auth} onClose={closeModal} onReorder={reorder} />
+        <OrdersModal auth={auth} onClose={closeModal} onReorder={reorder} onTrack={openTrack} />
       )}
+      {modal === "track" && auth && (
+        <TrackModal auth={auth} orderId={trackId} onClose={closeModal} onViewOrders={() => setModal("orders")} />
+      )}
+      {modal === "info" && <InfoModal kind={infoKind} onClose={closeModal} showToast={showToast} />}
 
       <section className="about-section" id="about">
         <div>

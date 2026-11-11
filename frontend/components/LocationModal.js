@@ -15,7 +15,12 @@ const CITIES = [
   ["Bengaluru", "Karnataka"]
 ];
 
-export default function LocationModal({ current, onSave, onClose }) {
+function formatAccuracy(meters) {
+  return meters >= 1000 ? `±${Math.round(meters / 1000)} km` : `±${Math.round(meters)} m`;
+}
+
+export default function LocationModal({ current, onSave, onClose, guess }) {
+  const [found, setFound] = useState(guess || null); // an approximate location waiting for confirmation
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -24,7 +29,13 @@ export default function LocationModal({ current, onSave, onClose }) {
     setError("");
     setBusy(true);
     try {
-      onSave(await detectLocation());
+      const loc = await detectLocation();
+      if (loc.accuracy > 3000) {
+        setFound(loc); // the browser is only guessing: ask before using it
+        setBusy(false);
+      } else {
+        onSave(loc);
+      }
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -43,6 +54,19 @@ export default function LocationModal({ current, onSave, onClose }) {
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="location-title">
         <button className="close-button modal-close" onClick={onClose} aria-label="Close">✕</button>
         <h2 id="location-title">Delivery location 📍</h2>
+
+        {found && (
+          <div className="guess-box">
+            <p>
+              📍 We found an <strong>approximate</strong> location: <strong>{found.label}</strong>{" "}
+              (accurate to about {formatAccuracy(found.accuracy)}). Is this correct?
+            </p>
+            <div className="guess-actions">
+              <button type="button" className="small-btn" onClick={() => onSave(found)}>Yes, use this</button>
+              <button type="button" className="small-btn" onClick={() => setFound(null)}>No, choose my city</button>
+            </div>
+          </div>
+        )}
 
         {current && <p className="otp-note" style={{ textAlign: "left", marginBottom: 12 }}>Current: {current.address}</p>}
 

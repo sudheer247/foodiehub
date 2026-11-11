@@ -9,7 +9,7 @@ const METHODS = [
   ["cod", "💵 Cash on Delivery", "Cash on Delivery"]
 ];
 
-export default function CheckoutModal({ lines, total, auth, onClose, onPlaced, onViewOrders, defaultAddress = "" }) {
+export default function CheckoutModal({ lines, total, auth, onClose, onPlaced, onViewOrders, onTrack, defaultAddress = "" }) {
   const [f, setF] = useState({
     name: auth.user.name, phone: auth.user.phone || "", address: defaultAddress, upi: "", cardNumber: "", expiry: "", cvv: ""
   });
@@ -70,7 +70,8 @@ export default function CheckoutModal({ lines, total, auth, onClose, onPlaced, o
             <div className="success-icon">✅</div>
             <h2>Order placed!</h2>
             <p>Order {placed.id} · ₹{placed.total} · {placed.method}. Your food is on its way (demo)!</p>
-            <button className="primary-button" onClick={onClose}>Done</button>
+            <button className="primary-button" onClick={() => onTrack(placed.id)}>📍 Track Order</button>
+            <button className="clear-button" onClick={onClose}>Done</button>
             <button className="clear-button" onClick={onViewOrders}>View Order History</button>
           </div>
         ) : (
